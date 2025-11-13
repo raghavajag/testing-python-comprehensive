@@ -1,74 +1,142 @@
 """
-Legacy Service - Dead Code Examples
-====================================
+Legacy Service - Dead Code and Mixed Path Examples
+===================================================
 
 Contains deprecated and unreachable code with vulnerabilities:
-1. Legacy import processor with dead code path
+1. Legacy import processor with MIXED PATHS:
+   - Path 1: Dead code path (never executes)
+   - Path 2: Live path with validation (sanitized)
+   - Path 3: Admin-only path (protected)
 2. Deprecated functions that are never called
 3. Functions that lead to dead code sinks
 
-These demonstrate false_positive_dead_code classification
+These demonstrate false_positive_dead_code classification AND mixed scenarios
 """
 
 from typing import Dict, Any
 from services.database_service import DatabaseService
+from services.validation_service import ValidationService
 
 
 class LegacyService:
-    """Legacy service with dead code vulnerabilities"""
+    """Legacy service with dead code vulnerabilities and mixed path scenarios"""
     
     def __init__(self):
         self.db_service = DatabaseService()
+        self.validation_service = ValidationService()
         self.legacy_mode_enabled = False  # Always False - feature deprecated
+        self.admin_legacy_mode = False  # Never set to True anywhere
     
-    # ==================== VULN 8: FALSE POSITIVE - Dead Code Path ====================
+    # ==================== VULN 8: MIXED SCENARIO - Multiple Paths with Different Classifications ====================
     
-    def process_legacy_import(self, import_data: str) -> Dict[str, Any]:
+    def process_legacy_import(self, import_data: str, is_admin: bool = False, import_type: str = "standard") -> Dict[str, Any]:
         """
-        VULN 8: FALSE POSITIVE - false_positive_dead_code
+        VULN 8: MIXED SCENARIO - Multiple attack paths with different classifications
         
-        This function is called from /api/legacy/import endpoint,
-        BUT it has a dead code path that never executes
+        This function demonstrates a complex scenario with 3 attack paths:
         
-        The legacy_mode_enabled flag is always False and can never be changed,
-        so the vulnerable execute_legacy_query() is never reached
+        PATH 1 (DEAD CODE): legacy_mode_enabled branch
+            → execute_legacy_query() 
+            → SQL injection sink (UNREACHABLE)
+            Classification: DEAD_CODE
+            
+        PATH 2 (SANITIZED): standard import with validation
+            → _validate_import_data()
+            → _process_modern_import_with_query()
+            → SQL injection sink (PROTECTED by validation)
+            Classification: SECURE/PROTECTED
+            
+        PATH 3 (DEAD CODE): admin legacy mode branch
+            → _process_admin_legacy_import()
+            → SQL injection sink (UNREACHABLE - admin_legacy_mode always False)
+            Classification: DEAD_CODE
         
-        Attack path: request.json → import_data → process_legacy_import → 
-                     execute_legacy_query (DEAD CODE BRANCH)
+        OVERALL: Must be classified as FALSE POSITIVE because:
+        - Path 1: Dead code (never executes)
+        - Path 2: Live but sanitized (validation protects)
+        - Path 3: Dead code (never executes)
         
-        Protection: Dead code - the vulnerable branch is unreachable
+        This tests the LLM's ability to:
+        1. Analyze multiple paths independently
+        2. Classify per-path viability correctly
+        3. Make overall vulnerability assessment based on worst-case LIVE path
+        4. Recognize that all exploitable paths are either dead or protected
         """
-        # Check legacy mode (always False - deprecated feature)
+        
+        # PATH 1: Dead code branch - legacy_mode_enabled is always False
         if self.legacy_mode_enabled:
-            # DEAD CODE BRANCH - this is never executed
-            # legacy_mode_enabled is always False and immutable
+            # ⚰️ DEAD CODE BRANCH - never executes
+            # legacy_mode_enabled is immutable and always False
             return self.execute_legacy_query(import_data)
         
-        # Live code path - safe processing
-        return self._process_modern_import(import_data)
+        # PATH 3: Another dead code branch - admin_legacy_mode never True
+        if is_admin and self.admin_legacy_mode:
+            # ⚰️ DEAD CODE BRANCH - never executes
+            # admin_legacy_mode is never set to True anywhere in codebase
+            return self._process_admin_legacy_import(import_data)
+        
+        # PATH 2: LIVE CODE PATH with validation (the only reachable path)
+        # This path is live but PROTECTED by validation
+        try:
+            validated_data = self._validate_import_data(import_data)
+            return self._process_modern_import_with_query(validated_data, import_type)
+        except ValueError as e:
+            return {'status': 'error', 'message': str(e)}
+    
+    def _validate_import_data(self, data: str) -> str:
+        """
+        Validates import data before processing (PATH 2 protection)
+        Uses strict allowlist validation to prevent SQL injection
+        """
+        # Allowlist: only alphanumeric and underscores allowed
+        if not self.validation_service.validate_alphanumeric(data):
+            raise ValueError("Import data must be alphanumeric")
+        return data
+    
+    def _process_modern_import_with_query(self, validated_data: str, import_type: str) -> Dict[str, Any]:
+        """
+        PATH 2: Live path that executes SQL query but with validated input
+        This demonstrates a sink that is reachable but protected by validation
+        
+        The validated_data has been sanitized by _validate_import_data()
+        which ensures only alphanumeric characters, preventing SQL injection
+        """
+        # This LOOKS vulnerable but validated_data is sanitized
+        query = f"INSERT INTO import_log (data, type) VALUES ('{validated_data}', '{import_type}')"
+        cursor = self.db_service.conn.cursor()
+        try:
+            cursor.execute(query)  # VULN 8 PATH 2: SQL INJECTION SINK (but validated input)
+            self.db_service.conn.commit()
+            return {'status': 'success', 'message': 'Data imported using modern system', 'data': validated_data}
+        except Exception as e:
+            return {'status': 'error', 'message': f'Import failed: {str(e)}'}
     
     def execute_legacy_query(self, legacy_data: str) -> Dict[str, Any]:
         """
-        DEAD CODE FUNCTION - never called due to legacy_mode_enabled = False
+        PATH 1: DEAD CODE FUNCTION - never called due to legacy_mode_enabled = False
         
         This contains a SQL injection vulnerability but is completely unreachable
         The process_legacy_import() function never enters the if-branch
         """
         # This is dead code - SQL injection sink never reached
-        result = self.db_service.execute_legacy_query(legacy_data)
-        return result
+        query = f"INSERT INTO users (username, email) VALUES ('{legacy_data}', 'legacy@example.com')"
+        cursor = self.db_service.conn.cursor()
+        cursor.execute(query)  # VULN 8 PATH 1: SQL INJECTION SINK (but dead code)
+        self.db_service.conn.commit()
+        return {'status': 'inserted', 'data': legacy_data}
     
-    def _process_modern_import(self, import_data: str) -> Dict[str, Any]:
+    def _process_admin_legacy_import(self, import_data: str) -> Dict[str, Any]:
         """
-        Modern, safe import processing
-        This is the actual live code path that executes
+        PATH 3: DEAD CODE FUNCTION - never called due to admin_legacy_mode = False
+        
+        This is another unreachable path with SQL injection
         """
-        # Safe processing logic
-        return {
-            'status': 'success',
-            'message': 'Data processed using modern import system',
-            'data': import_data[:100]  # Truncate for safety
-        }
+        # This is dead code - SQL injection sink never reached
+        query = f"INSERT INTO admin_imports (data) VALUES ('{import_data}')"
+        cursor = self.db_service.conn.cursor()
+        cursor.execute(query)  # VULN 8 PATH 3: SQL INJECTION SINK (but dead code)
+        self.db_service.conn.commit()
+        return {'status': 'admin_import', 'data': import_data}
     
     # ==================== ADDITIONAL DEAD CODE EXAMPLES ====================
     

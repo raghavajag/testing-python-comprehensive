@@ -58,6 +58,20 @@ class ValidationService:
             raise ValueError(f"Invalid role: {role}")
         return role
     
+    def validate_alphanumeric(self, value: str) -> bool:
+        """
+        CRITICAL for VULN 8 PATH 2: Validates that input is strictly alphanumeric
+        
+        Uses re.fullmatch() to ensure the ENTIRE string is alphanumeric + underscores
+        This prevents SQL injection by disallowing quotes, semicolons, dashes, etc.
+        
+        This is used in the mixed scenario (VULN 8) to protect the live path
+        """
+        # Strict validation - only alphanumeric and underscores allowed
+        if not re.fullmatch(r'^[a-zA-Z0-9_]+$', value):
+            return False
+        return True
+    
     # ==================== WEAK VALIDATION (Partial Protection) ====================
     
     def check_template_safety(self, template_code: str) -> bool:

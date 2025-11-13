@@ -8,11 +8,23 @@ This Flask application is designed to test the AI-SAST analyzer's ability to:
 3. Recognize effective sanitization and validation
 4. Assess authentication/authorization protections
 5. Handle complex attack paths with multiple hops
+6. Handle MIXED SCENARIOS (multiple paths, different classifications)
 
 VULNERABILITY DISTRIBUTION:
 - Total Sinks: 8
-- True Positives: 1-2 (must_fix or good_to_fix)
-- False Positives: 6-7 (dead_code, sanitized, or protected)
+- True Positives: 2 (25%) - must_fix or good_to_fix
+- False Positives: 6 (75%)
+  - FP Sanitized: 2 (Subcategory 2B: Validation, Subcategory 2C: Architectural)
+  - FP Protected: 3 (Subcategory 3A: Auth/Authz, Subcategory 3B: Defense-in-Depth)
+  - FP Mixed Scenario: 1 (Multiple paths: 2 dead, 1 live+sanitized)
+
+TESTING COVERAGE:
+✅ All 3 FP categories (sanitized, protected, dead_code/mixed)
+✅ Subcategories: 2B (Validation), 2C (Architectural), 3A (Auth), 3B (Defense-in-Depth)
+✅ Weak vs strong validation (good_to_fix vs false_positive)
+✅ Multi-hop attack paths (2-4 hops)
+✅ Mixed path scenarios (some dead, some live but protected)
+✅ Dead code with multiple unreachable branches
 """
 
 from flask import Flask, request, jsonify, session
@@ -93,9 +105,10 @@ def get_user_profile():
 @app.route('/api/report/generate', methods=['POST'])
 def generate_report():
     """
-    VULN 3: FALSE POSITIVE - false_positive_sanitized (Subcategory 2A - Direct Sanitization)
-    SQL injection protected by parameterized queries (ORM-style)
+    VULN 3: FALSE POSITIVE - false_positive_sanitized (Subcategory 2C - Architectural)
+    SQL injection protected by ORM query builder (architectural pattern)
     Attack path: request.json → report_type → db_service.generate_report_parameterized
+    Protection: QueryBuilder class provides architectural SQL injection protection
     """
     report_type = request.json.get('report_type', '')
     user_filter = request.json.get('user_filter', '')
@@ -171,14 +184,29 @@ def admin_template_preview():
 @app.route('/api/legacy/import', methods=['POST'])
 def legacy_import_data():
     """
-    VULN 8: FALSE POSITIVE - false_positive_dead_code
-    SQL injection in completely unreachable code path
-    Attack path: request.json → import_data → legacy_service.process_legacy_import → 
-                 legacy_service.execute_legacy_query (DEAD CODE)
-    All paths lead to dead/deprecated functions that are never actually called
+    VULN 8: MIXED SCENARIO - Multiple paths with different classifications
+    
+    This endpoint demonstrates a complex testing scenario with 3 attack paths:
+    
+    PATH 1 (DEAD): legacy_mode_enabled branch → execute_legacy_query() (unreachable)
+    PATH 2 (LIVE but SANITIZED): validation → _process_modern_import_with_query() (protected)
+    PATH 3 (DEAD): admin_legacy_mode branch → _process_admin_legacy_import() (unreachable)
+    
+    Tests the scanner's ability to:
+    - Analyze multiple paths independently
+    - Classify each path's viability (VULNERABLE/PROTECTED/DEAD_CODE)
+    - Make overall assessment: FALSE POSITIVE (all live paths are sanitized, dead paths unreachable)
+    
+    Attack paths: 
+      - request.json → import_data → legacy_service.process_legacy_import
+      - Path 1: → execute_legacy_query (DEAD CODE)
+      - Path 2: → _validate_import_data → _process_modern_import_with_query (LIVE + SANITIZED)
+      - Path 3: → _process_admin_legacy_import (DEAD CODE)
     """
     import_data = request.json.get('data', '')
-    result = legacy_service.process_legacy_import(import_data)
+    is_admin = request.json.get('is_admin', False)
+    import_type = request.json.get('type', 'standard')
+    result = legacy_service.process_legacy_import(import_data, is_admin, import_type)
     return jsonify(result)
 
 

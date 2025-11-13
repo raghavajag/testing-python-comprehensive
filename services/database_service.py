@@ -13,6 +13,39 @@ import sqlite3
 from typing import Dict, List, Any, Optional
 
 
+class QueryBuilder:
+    """
+    Simulates an ORM query builder (like SQLAlchemy) that provides architectural protection
+    This demonstrates Subcategory 2C - Architectural sanitization through framework patterns
+    """
+    def __init__(self, connection, table_name: str):
+        self.conn = connection
+        self.table = table_name
+        self.conditions = []
+        self.params = []
+    
+    def filter_by(self, field: str, value: Any):
+        """Simulates ORM filter_by (exact match) with automatic parameterization"""
+        self.conditions.append(f"{field} = ?")
+        self.params.append(value)
+        return self
+    
+    def filter_like(self, field: str, value: Any):
+        """Simulates ORM contains filter with automatic parameterization"""
+        self.conditions.append(f"{field} LIKE ?")
+        self.params.append(f'%{value}%')
+        return self
+    
+    def execute(self) -> List[tuple]:
+        """Execute the built query with automatic parameterization"""
+        where_clause = " AND ".join(self.conditions) if self.conditions else "1=1"
+        query = f"SELECT * FROM {self.table} WHERE {where_clause}"
+        cursor = self.conn.cursor()
+        # Automatic parameterization by the ORM framework
+        cursor.execute(query, tuple(self.params))
+        return cursor.fetchall()
+
+
 class DatabaseService:
     """Database service with various SQL injection patterns"""
     
@@ -70,20 +103,36 @@ class DatabaseService:
             return {'id': result[0], 'username': result[1], 'email': result[2], 'role': result[3]}
         return None
     
-    # ==================== VULN 3: FALSE POSITIVE - Parameterized Query ====================
+    # ==================== VULN 3: FALSE POSITIVE - Architectural Sanitization (ORM) ====================
     
     def generate_report_parameterized(self, report_type: str, user_filter: str) -> List[Dict[str, Any]]:
         """
-        VULN 3: FALSE POSITIVE - false_positive_sanitized (Direct Sanitization)
-        Uses parameterized queries which prevent SQL injection
-        This demonstrates proper ORM-style protection
+        VULN 3: FALSE POSITIVE - false_positive_sanitized (Subcategory 2C - Architectural)
+        Uses query builder pattern (ORM-style) which provides architectural protection
+        This simulates SQLAlchemy/Django ORM query construction
+        
+        Even though user input is incorporated, the query builder architecture
+        ensures proper escaping and prevents SQL injection
         """
-        # Safe: Using parameterized query
-        query = "SELECT * FROM transactions WHERE user_id = ? AND description LIKE ?"
-        cursor = self.conn.cursor()
-        cursor.execute(query, (user_filter, f'%{report_type}%'))  # VULN 3: SQL INJECTION SINK (but parameterized)
-        results = cursor.fetchall()
+        # Simulate ORM query builder pattern (like SQLAlchemy)
+        # This LOOKS like string concatenation but the builder handles escaping
+        query_builder = self._build_safe_query()
+        
+        # ORM-style method chaining with automatic escaping
+        # Simulates: Transaction.query.filter_by(user_id=user_filter).filter(description__contains=report_type)
+        query_builder.filter_by("user_id", user_filter)
+        query_builder.filter_like("description", report_type)
+        
+        # Execute through query builder (architectural protection)
+        results = query_builder.execute()  # VULN 3: SQL INJECTION SINK (but ORM-protected)
         return [{'id': r[0], 'user_id': r[1], 'amount': r[2], 'description': r[3]} for r in results]
+    
+    def _build_safe_query(self):
+        """
+        Simulates an ORM query builder that provides architectural SQL injection protection
+        This represents frameworks like SQLAlchemy, Django ORM, or ActiveRecord
+        """
+        return QueryBuilder(self.conn, "transactions")
     
     # ==================== VULN 6: FALSE POSITIVE - Admin Protected ====================
     
@@ -114,19 +163,6 @@ class DatabaseService:
         cursor.execute(query)  # Dead code - never reached
         results = cursor.fetchall()
         return [{'id': r[0], 'username': r[1]} for r in results]
-    
-    def execute_legacy_query(self, legacy_data: str) -> Dict[str, Any]:
-        """
-        VULN 8: FALSE POSITIVE - dead_code
-        Part of legacy service chain - this is deprecated and never actually called
-        The LegacyService.process_legacy_import() has a dead code path
-        """
-        # This looks vulnerable but is in dead code
-        query = f"INSERT INTO users (username, email) VALUES ('{legacy_data}', 'legacy@example.com')"
-        cursor = self.conn.cursor()
-        cursor.execute(query)  # VULN 8: SQL INJECTION SINK (but dead code)
-        self.conn.commit()
-        return {'status': 'inserted', 'data': legacy_data}
     
     # ==================== HELPER FUNCTIONS ====================
     
